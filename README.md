@@ -157,7 +157,7 @@ For the spectral methods underpinning the Cheb–Lobatto integration matrix:
 
 ## What's missing
 
-Honest list of things on the roadmap that we haven't built yet:
+List of things on the roadmap that we haven't built yet:
 
 - **APC error-feedback acceleration** (Woollands–Junkins 2019). Halves iteration count in their experiments. Should add.
 - **Automatic node-count adaptivity.** Right now the user picks `n_cheb`. The APC paper has heuristics for choosing `n_cheb` per segment based on observed convergence rates.
