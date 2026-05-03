@@ -2,7 +2,15 @@
 
 **M**odified **C**hebyshev–**P**icard **I**teration for solving ordinary differential equations in Python.
 
-A clean, [numba](https://numba.pydata.org)-accelerated Python implementation of the Cheb–Picard iterative ODE solver, with adaptive multistage segmentation. Often 100×–1000× faster than scipy at machine-precision tolerances on smooth nonlinear IVPs.
+A [numba](https://numba.pydata.org)-accelerated implementation of the Cheb–Picard iterative ODE solver, with adaptive multistage segmentation. Often 100×–1000× faster than scipy at machine-precision tolerances on smooth nonlinear IVPs.
+
+![MCPI vs scipy speedup](assets/headline.png)
+
+## Quickstart
+
+```bash
+pip install -e .
+```
 
 ```python
 import numpy as np
@@ -15,18 +23,34 @@ def lorenz(t, u, out):
     out[1] = u[0] * (28 - u[2]) - u[1]
     out[2] = u[0] * u[1] - (8/3) * u[2]
 
-sol = mcpi.solve(lorenz, t_span=(0, 5), y0=[1.0, 1.0, 1.0], tol=1e-13)
-print(sol(2.5))                # state at t = 2.5
-print(sol(np.linspace(0, 5)))  # batched evaluation
+sol = mcpi.solve(lorenz, t_span=(0, 30), y0=[1.0, 1.0, 1.0], tol=1e-13)
+
+print(sol.success, sol.n_segments, sol.nfev)
+print(sol(15.0))                       # state at t = 15
+print(sol(np.linspace(0, 30, 1001)))   # batched dense evaluation
 ```
 
-## What this is and isn't
+The first call to `mcpi.solve` with a new RHS triggers a one-time numba compile (~1 s); subsequent calls reuse the cached kernel.
 
-**This is** a fast, well-tested Python implementation of an existing, well-published algorithm: Modified Chebyshev–Picard Iteration. The core ideas are not new. The implementation is.
+The Lorenz attractor produced by the snippet above:
 
-**This is not** a new ODE solver method. The algorithm goes back to Bai & Junkins (2010-2011) and has been refined by their group and others over fifteen years. We're standing on a lot of shoulders.
+![Lorenz attractor under MCPI](assets/lorenz.png)
 
-We wrote `mcpi` because we wanted a clean, fast, scipy-compatible Python package for a method that has been mostly published in MATLAB and aerospace research code, and because the benchmark suite is genuinely useful for comparing solvers in the non-stiff regime.
+The error in a single segment falls exponentially with the polynomial degree `n_cheb` — that's spectral convergence — and hits machine ε at modest degrees:
+
+![Spectral convergence](assets/convergence.png)
+
+More examples:
+
+```bash
+python examples/quickstart.py     # 1-D ODE with closed-form check
+python examples/lorenz.py         # the chaotic Lorenz system
+python benchmarks/run.py          # the full 17-problem benchmark vs scipy
+```
+
+## What this is
+
+A Python implementation of Modified Chebyshev–Picard Iteration. The algorithm is not new — it goes back to Bai & Junkins (2010-2011) and has been refined by their group and others over fifteen years. The implementation is what's new here: a scipy-compatible Python package for a method that has mostly lived in MATLAB and aerospace research code, plus a benchmark suite that's useful in its own right for comparing solvers in the non-stiff regime.
 
 ## Algorithm in one paragraph
 
@@ -39,12 +63,10 @@ until the iterate stops moving. This is the Picard fixed-point iteration applied
 ## Installation
 
 ```bash
-pip install -e .                # core only
+pip install -e .                # core only — numpy + numba
 pip install -e ".[test]"        # add pytest + scipy for the test suite
 pip install -e ".[bench]"       # add scipy, matplotlib, mpmath for benchmarks
 ```
-
-Core requirements: `numpy`, `numba`.
 
 ## Running tests
 
@@ -52,10 +74,7 @@ Core requirements: `numpy`, `numba`.
 pytest tests/
 ```
 
-The suite covers Chebyshev primitives, every benchmark problem with a
-closed-form reference, cross-checks vs `scipy.integrate.solve_ivp` at
-`rtol=atol=1e-13`, and conservation laws (energy, angular momentum,
-Lotka–Volterra invariant) on long integrations.
+The suite (45 tests, ~6 s) covers Chebyshev primitives, every benchmark problem with a closed-form reference, cross-checks vs `scipy.integrate.solve_ivp` at `rtol=atol=1e-13`, and conservation laws (energy, angular momentum, Lotka–Volterra invariant) on long integrations.
 
 ## API
 
@@ -90,13 +109,13 @@ Your RHS function must:
 
 This lets numba inline the RHS into the Picard kernel and produces tight machine code.
 
-## Where it shines, where it doesn't
+## When to use this
 
-**Best regime.** Smooth, non-stiff or mildly-stiff IVPs at high precision (`tol = 1e-10` to `1e-14`). Chaotic systems (Lorenz). Long oscillations. Polynomial systems. Most analytic nonlinearities.
+**Use it for.** Smooth non-stiff or mildly-stiff IVPs at high precision (`tol = 1e-10` to `1e-14`). Chaotic systems (Lorenz). Long oscillations. Polynomial systems. Most analytic nonlinearities.
 
-**Avoid.** Extreme stiffness (stiffness ratio $> 10^4$). Use scipy's `LSODA` / `Radau` / `BDF` for that. We have a Robertson chemistry test in the suite to demonstrate the failure mode honestly.
+**Don't.** Extreme stiffness (stiffness ratio $> 10^4$) — use scipy's `LSODA` / `Radau` / `BDF`. The Robertson problem in the benchmark suite shows the failure mode.
 
-**Indifferent.** Discontinuous or stochastic RHS. Picard iteration assumes smoothness; the algorithm will work but won't shine.
+**Maybe.** Discontinuous or stochastic RHS. Picard iteration assumes smoothness; it will work but won't be fast.
 
 ## Benchmark results
 
@@ -123,20 +142,20 @@ Run on 17 standard problems with high-precision references (closed-form, mpmath@
 | lorenz | 3.32 | 3604 (Radau) | **1085×** |
 | robertson | (solver inappropriate — extreme stiffness) | LSODA 13ms | — |
 
-To reproduce: `cd benchmarks && python run.py`. Per-problem Pareto plots and a summary plot are written to `benchmarks/bench_out/`.
+To reproduce: `cd benchmarks && python run.py`. Per-problem Pareto plots and a summary plot are written to `benchmarks/bench_out/`. To regenerate the polished figures used above in this README: `python scripts/make_readme_plots.py` (writes to `assets/`).
 
-A few notes on these numbers:
+Notes on these numbers:
 
-- "Best scipy" is the fastest scipy method that achieves error within 2× of MCPI's best, which is usually `Radau` at `rtol=atol=1e-13` (high precision but slow). Where `LSODA` or `DOP853` can match the precision faster, those are reported instead.
-- The very high speedups (200×–1000×) come because scipy's high-precision methods do many small steps; MCPI achieves spectral convergence so it needs few segments.
-- The small speedups (3×–4×) come on problems where scipy already has a fast path (LSODA on smooth oscillators) or where MCPI's convergence is hampered (stiffer problems).
-- We never beat the right tool for stiff problems. `LSODA` and `BDF` exist for a reason.
+- "Best scipy" is the fastest scipy method whose error is within 2× of MCPI's best — usually `Radau` at `rtol=atol=1e-13`. Where `LSODA` or `DOP853` matches the precision faster, those are reported instead.
+- The 200×–1000× speedups come from spectral convergence: MCPI gets to machine ε in a handful of segments where scipy's high-precision methods need hundreds of small steps.
+- The 3×–4× speedups are on problems where scipy already has a fast path (LSODA on smooth oscillators) or where MCPI's convergence is hampered (stiffer problems).
+- MCPI doesn't beat the right tool for stiff problems. `LSODA` and `BDF` exist for a reason.
 
-## Honest comparison vs scipy
+## vs scipy
 
-In short: MCPI dominates on smooth, non-stiff IVPs at tight tolerance. scipy's LSODA still wins on quasi-stiff oscillators that benefit from automatic stiffness detection. scipy's BDF/Radau win on truly stiff problems.
+MCPI is the right tool for smooth nonlinear IVPs at high precision. scipy's LSODA wins on quasi-stiff oscillators where automatic stiffness detection pays off; BDF and Radau win on truly stiff problems.
 
-If you're solving a smooth nonlinear IVP and you need high precision, try `mcpi.solve` first. If you're solving a Robertson-like chemical kinetics problem, use `scipy.integrate.solve_ivp(method='LSODA')`. If you don't know what regime your problem is in, profile both.
+If you don't know which regime you're in, profile both.
 
 ## Provenance and prior art
 
@@ -146,28 +165,32 @@ This package is an implementation of, with minor variations, the methods describ
 - **Bai, X. & Junkins, J. L.** (2011). "Modified Chebyshev–Picard Iteration Methods for Solution of Initial Value Problems." *Journal of the Astronautical Sciences* 58(4), 583–613.
 - **Bai, X. & Junkins, J. L.** (2011). "Modified Chebyshev–Picard Iteration Methods for Solution of Boundary Value Problems." *Journal of the Astronautical Sciences* 58(4), 615–642.
 - **Macomber, B., Probe, A. B., Woollands, R., Read, J., Junkins, J. L.** (2013). "Modified Chebyshev–Picard Iteration for Efficient Numerical Integration of Ordinary Differential Equations." Advanced Maui Optical and Space Surveillance Technologies Conference.
-- **Kim, D., Junkins, J. L., Turner, J. D.** (2015). "Multisegment Scheme Applications to Modified Chebyshev–Picard Iteration Method for Highly Elliptical Orbits." *Mathematical Problems in Engineering* 290781. The multisegment idea our adaptive driver borrows.
+- **Kim, D., Junkins, J. L., Turner, J. D.** (2015). "Multisegment Scheme Applications to Modified Chebyshev–Picard Iteration Method for Highly Elliptical Orbits." *Mathematical Problems in Engineering* 290781. Source of the multisegment idea behind the adaptive driver here.
 - **Macomber, B., Probe, A. B., Woollands, R., Read, J., Junkins, J. L.** (2016). "Enhancements to Modified Chebyshev–Picard Iteration Efficiency for Perturbed Orbit Propagation." *CMES* 111(1).
-- **Woollands, R. & Junkins, J. L.** (2019). "Nonlinear Differential Equation Solvers via Adaptive Picard–Chebyshev Iteration: Applications in Astrodynamics." *Journal of Guidance, Control, and Dynamics* 42(5), 1007–1022. Adds error-feedback acceleration; we have not yet implemented this and so are leaving performance on the table relative to APC.
+- **Woollands, R. & Junkins, J. L.** (2019). "Nonlinear Differential Equation Solvers via Adaptive Picard–Chebyshev Iteration: Applications in Astrodynamics." *Journal of Guidance, Control, and Dynamics* 42(5), 1007–1022. Adds error-feedback acceleration, not yet implemented here.
 
 The closely-related **Parker–Sochacki Method** (Parker & Sochacki 1996; Carothers, Parker, Sochacki, Warne 2005) and the **Adomian–Rach modified decomposition method** (Adomian, Rach, Meyers 1991, 1997) reach similar conclusions via Maclaurin series rather than Chebyshev collocation; for polynomial RHSs the three approaches are mathematically equivalent.
 
 For the spectral methods underpinning the Cheb–Lobatto integration matrix:
 - **Trefethen, L. N.** (2000). *Spectral Methods in MATLAB.* SIAM. Chapter 6 is the standard reference.
 
-## What's missing
+## Roadmap
 
-Honest list of things on the roadmap that we haven't built yet:
+Things not built yet:
 
-- **APC error-feedback acceleration** (Woollands–Junkins 2019). Halves iteration count in their experiments. Should add.
-- **Automatic node-count adaptivity.** Right now the user picks `n_cheb`. The APC paper has heuristics for choosing `n_cheb` per segment based on observed convergence rates.
-- **Dense `t_eval` integration** in the style of scipy's `solve_ivp(t_eval=...)`. Easy to add as a thin wrapper around `sol(t)`.
+- **APC error-feedback acceleration** (Woollands–Junkins 2019). Halves iteration count in their experiments.
+- **Automatic node-count adaptivity.** The user currently picks `n_cheb`; APC has heuristics to pick it per segment from observed convergence rates.
+- **Dense `t_eval` integration** in the style of scipy's `solve_ivp(t_eval=...)`. Thin wrapper around `sol(t)`.
 - **Event detection.** Useful but non-trivial.
-- **Comparison vs SUNDIALS / DifferentialEquations.jl.** scipy isn't the state of the art. We've benchmarked vs scipy because that's what most Python users will compare against.
-- **Sensitivity analysis** (`u' = f(u, p)` with derivatives w.r.t. `p`). Picard iteration extends naturally; we just haven't done it.
-- **Better stiff-problem detection** so the solver can refuse a problem and recommend `scipy.integrate` instead.
+- **Comparison vs SUNDIALS / DifferentialEquations.jl.** scipy isn't the state of the art; it's just what most Python users will compare against.
+- **Sensitivity analysis** (`u' = f(u, p)` with derivatives w.r.t. `p`). Picard iteration extends naturally.
+- **Stiff-problem detection** so the solver can refuse a problem and recommend `scipy.integrate` instead.
 
 PRs welcome.
+
+## Acknowledgments
+
+This package was written with [Claude Opus](https://www.anthropic.com/claude) as a pair-programming collaborator — for the implementation, the test suite, and the benchmark harness.
 
 ## License
 

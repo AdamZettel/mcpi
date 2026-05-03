@@ -27,6 +27,9 @@ htmlcov/
 # Benchmark output
 benchmarks/bench_out/
 
+# Example-script side-effect outputs (regenerated on demand)
+examples/lorenz_example.png
+
 # Numba JIT cache
 __pycache__/
 *.nbi
